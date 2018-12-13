@@ -581,7 +581,7 @@ void Rover::steer_pos_output(double steer_pos_tar) {
     message[6] = (uint8_t) ((int8_t) (steer_pos * 100));
     message[7] = 1;
 
-    hal.uartE->write(message, 8);
+    hal.uartE->write(message[6]);
 
 }
 

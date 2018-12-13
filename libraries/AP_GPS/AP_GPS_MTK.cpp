@@ -62,47 +62,48 @@ bool AP_GPS_MTK::read(void) {
     bool parsed = false;
 //    bool IsAMsg = false;
 //
-    uint8_t numc = port->available();
+    uint16_t numc = port->available();
 
-//    hal.uartE->printf("\r\n numc:%d \r\n",numc);
-    _ck_a = 0;
+    if (numc >= 168) {
 
-    head = 1;
-    tail = 0;
+        _ck_a = 0;
 
-    GPS_data_2_temp_buffer(numc);         //读取数据
+        head = 0;
+        tail = 0;
 
-    for (uint8_t k = 0; k <= numc; k++) {
-        if (head + 84 >= numc) {
-            break;
-        }
+        GPS_data_2_temp_buffer(numc);         //读取数据
 
-        if (temp_buffer[head] != PREAMBLE1) {        //判断帧头
-            head++;
+        for (uint16_t k = 0; k <= numc; k++) {
+            if (head + 84 >= numc) {
+                break;
+            }
+
+            if (temp_buffer[head % 1024] != PREAMBLE1) {        //判断帧头
+                head++;
 //            if (hal.scheduler->millis() % 500 < 20) {
 //                hal.uartE->printf("\r\n  head: %d , tail: %d  \r\n", head,
 //                        tail);
 //            }
 
-        } else {
-            for (int8_t i = 1; i <= 82; i++) {
-                _ck_a += temp_buffer[(head + i)];     //计算校验和
-            }
+            } else {
+                for (int8_t i = 1; i <= 82; i++) {
+                    _ck_a += temp_buffer[(head + i) % 1024];     //计算校验和
+                }
 //            port->printf("sum_c:%d\n sum_s:%d\n", _ck_a & 0xff,
 //                    temp_buffer[(head - 1)]);
-            if ((_ck_a = _ck_a & 0xff) == temp_buffer[(head + 83)]) {
+                if ((_ck_a = _ck_a & 0xff) == temp_buffer[(head + 83) % 1024]) {
 
-                temp_buffer_2_packed();                 // 保存数据
-                decodeMsg();                            // 解码
-                parsed = true;
-            } else {
-                head++;
+                    temp_buffer_2_packed();                 // 保存数据
+                    decodeMsg();                            // 解码
+                    parsed = true;
+                } else {
+                    head++;
+                }
             }
+
+            _ck_a = 0;
         }
-
-        _ck_a = 0;
     }
-
     return parsed;
 }
 
@@ -123,9 +124,9 @@ bool AP_GPS_MTK::decodeMsg() {
     state.location.lng = _buffer.msg.lng;
     state.location.alt = _buffer.msg.alt * 10;
 
-    if (hal.scheduler->millis() % 500 < 20) {
-        hal.uartE->printf("sta_lat:%d\n", state.location.lat);
-    }
+//    if (hal.scheduler->millis() % 500 < 20) {
+//        hal.uartE->printf("sta_lat:%d\n", state.location.lat);
+//    }
 
     state.ground_speed = sqrt(
             _buffer.msg.vel_e * _buffer.msg.vel_e
@@ -207,20 +208,23 @@ bool AP_GPS_MTK::decodeMsg() {
 }
 
 //  将GPS数据保存到临时缓存
-void AP_GPS_MTK::GPS_data_2_temp_buffer(uint8_t numc) {
+void AP_GPS_MTK::GPS_data_2_temp_buffer(uint16_t numc) {
 
     // 每次保存50字节的数据
-    for (uint8_t i = 0; i <= numc; i++) {
+    for (uint16_t i = 0; i <= numc; i++) {
 
-        temp_buffer[tail] = port->read();
+        temp_buffer[tail % 1024] = port->read();
         tail++;
+    }
+    if (tail - head >= 1024) {
+        head++;
     }
 }
 
 // 数据校验成功后将一帧数据保存到数据包
 void AP_GPS_MTK::temp_buffer_2_packed(void) {
     for (uint8_t i = 0; i <= 83; i++) {
-        _buffer.bytes[i] = temp_buffer[head];
+        _buffer.bytes[i] = temp_buffer[head % 1024];
         head++;
     }
 }

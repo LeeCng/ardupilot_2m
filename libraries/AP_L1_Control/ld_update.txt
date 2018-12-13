@@ -1,0 +1,69 @@
+/***************************************
+ * 汤老师方法，用于农机
+ *
+
+void AP_L1_Control::Ld_update_waypoint(const struct Location &prev_WP,
+    const struct Location &next_WP) {
+
+struct Location _current_loc;
+float Nu;
+float xtrackVel;
+float ltrackVel;
+
+// Get current position and velocity
+_ahrs.get_position(_current_loc);
+
+Vector2f _groundspeed_vector = _ahrs.groundspeed_vector();
+
+float groundSpeed = _groundspeed_vector.length();
+if (groundSpeed < 0.2f) {
+    // use a small ground speed vector in the right direction,
+    // allowing us to use the compass heading at zero GPS velocity
+    groundSpeed = 0.2f;
+//    _groundspeed_vector = Vector2f(cosf(_ahrs.yaw), sinf(_ahrs.yaw))
+//            * groundSpeed;
+    _groundspeed_vector = Vector2f(cosf(_gps.yaw()), sinf(_gps.yaw()))
+            * groundSpeed;
+}
+
+// Calculate time varying control parameters
+// Calculate the L1 length required for specified period
+// 0.3183099 = 1/1/pipi
+_L1_dist = 0.3183099f * _L1_damping * _L1_period * groundSpeed;
+
+// Calculate the NE position of WP B relative to WP A
+Vector2f AB = location_diff(prev_WP, next_WP);
+
+// Check for AB zero length and track directly to the destination
+// if too small
+if (AB.length() < 1.0e-6f) {
+    AB = location_diff(_current_loc, next_WP);
+    if (AB.length() < 1.0e-6f) {
+        AB = Vector2f(cosf(ToRad(_gps.yaw())), sinf(ToRad(_gps.yaw())));
+//        AB = Vector2f(cosf(_ahrs.yaw), sinf(_ahrs.yaw));
+    }
+}
+AB.normalize();
+
+// Calculate the NE position of the aircraft relative to WP A
+Vector2f A_air = location_diff(prev_WP, _current_loc);
+
+// calculate distance to target track, for reporting
+_crosstrack_error = A_air % AB;
+
+//Calculate Nu2 angle (angle of velocity vector relative to line connecting waypoints)
+xtrackVel = _groundspeed_vector % AB; // Velocity cross track
+ltrackVel = _groundspeed_vector * AB; // Velocity along track
+
+// 角度结果和原结果反向
+ Nu = -atan2f(xtrackVel, ltrackVel);
+
+double tan_tar_pos = 2 * 2
+        * (_crosstrack_error * cosf(Nu)
+                - sqrt(6 * 6 - 2 * 2) * sinf(Nu))
+        / (6 * 6);
+
+ _Ld_cmd_pos = atanf(tan_tar_pos);
+
+}
+*/

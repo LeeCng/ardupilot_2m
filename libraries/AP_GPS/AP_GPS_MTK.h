@@ -91,7 +91,7 @@ private:
     uint8_t         _payload_counter;
 
     // store buffer
-    uint8_t temp_buffer[512];
+    uint8_t temp_buffer[1024];
     uint32_t head ;
     uint32_t tail ;
 
@@ -108,7 +108,7 @@ private:
 
 
 
-    void GPS_data_2_temp_buffer(uint8_t);
+    void GPS_data_2_temp_buffer(uint16_t);
 
     void temp_buffer_2_packed(void);
 
