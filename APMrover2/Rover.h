@@ -377,6 +377,8 @@ private:
 
     bool mid_adjust_flag = 0;
 
+    // 导航方法 0：原方法 1： 汤老师方法
+    bool method =1 ;
 private:
     // private member functions
     void ahrs_update();

@@ -51,9 +51,9 @@ private:
         float pitch;
         float yaw;
         float roll;
-        float vel_e;
         float vel_n;
         float vel_d;
+        float vel_e;
         int32_t lng;      // /10^7 得到经度
         int32_t lat;      // /10^7 得到纬度
         int32_t alt;      // mm

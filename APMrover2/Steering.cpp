@@ -11,7 +11,7 @@ static AP_HAL::UARTDriver* uarts[] = { hal.uartA, // console
         };
 #define NUM_UARTS (sizeof(uarts)/sizeof(uarts[0]))
 #define output_freq  400
-#define pulse2angle  0.156*3.14/180
+#define pulse2angle  0.156*3.141519/180
 #define delta_time   20  // setservo 执行时间间隔  单位ms
 #define pos_range  45*3.14/180   // 舵角范围  ±45°
 uint32_t time_count = 0;
@@ -259,17 +259,17 @@ void Rover::calc_throttle(float target_speed) {
  *****************************************/
 
 void Rover::calc_lateral_acceleration() {
-    hal.uartD->begin(9600);
+//    hal.uartD->begin(9600);
 
     switch (control_mode) {
     case AUTO:
-        nav_controller->update_waypoint(current_loc, next_WP);
+        method = nav_controller->update_waypoint(prev_WP, next_WP);
         break;
 
     case RTL:
     case GUIDED:
     case STEERING:
-        nav_controller->update_waypoint(current_loc, next_WP);
+        method = nav_controller->update_waypoint(current_loc, next_WP);
         break;
     default:
         return;
@@ -330,8 +330,6 @@ void Rover::set_servos(void) {
 //    int16_t camera_V_sent;
 //    uint8_t camera_sent[6] = { 0 };
 
-    hal.rcout->set_freq(0xff, output_freq);
-
     channel_throttle->radio_mid = (channel_throttle->radio_max
             + channel_throttle->radio_min) / 2;
     channel_steer->radio_mid = (channel_steer->radio_max
@@ -342,6 +340,8 @@ void Rover::set_servos(void) {
             channel_steer->pwm_to_angle_dz(0));
 
     if (control_mode == MANUAL || control_mode == LEARNING) {
+
+        hal.rcout->set_freq(0xff, output_freq);
         // do a direct pass through of radio values
         //  throttle control
         channel_throttle->radio_in = channel_throttle->read();
@@ -351,21 +351,24 @@ void Rover::set_servos(void) {
          * 计算油门输出，正转时channel_camera_H通道3.3v，反转输出0
          **************************************/
 
-        if (channel_throttle->radio_in >= channel_throttle->radio_mid) {
+        if (channel_throttle->radio_in >= channel_throttle->radio_mid + 100) {
             channel_throttle->radio_out =
-                    (int16_t) (((float) (channel_throttle->radio_in
+                    (int16_t) (((float) (channel_throttle->radio_in - 100
                             - channel_throttle->radio_mid))
                             / (channel_throttle->radio_max
-                                    - channel_throttle->radio_mid) * 2500);
+                                    - channel_throttle->radio_mid - 100) * 1500);
             channel_throttle_dir->radio_out = 2500;
 
-        } else {
+        } else if (channel_throttle->radio_in
+                <= channel_throttle->radio_mid - 100) {
             channel_throttle->radio_out =
-                    (int16_t) (((float) (channel_throttle->radio_mid
+                    (int16_t) (((float) (channel_throttle->radio_mid - 100
                             - channel_throttle->radio_in))
-                            / (channel_throttle->radio_mid
-                                    - channel_throttle->radio_min) * 2500);
+                            / (channel_throttle->radio_mid - 100
+                                    - channel_throttle->radio_min) * 1500);
             channel_throttle_dir->radio_out = 0;
+        } else {
+            channel_throttle->radio_out = 0;
         }
 
         /*******************************
@@ -389,12 +392,38 @@ void Rover::set_servos(void) {
             // suppress throttle if in failsafe and manual
             channel_throttle->radio_out = channel_throttle->radio_trim;
         }
-    } else {
+    } else if (control_mode != HOLD) {
+        hal.rcout->set_freq(0xff, output_freq);
 
         //  auto rtl  mode etc
 
-        tar_pos = pos_range * (double) channel_steer->servo_out / 4500;
-        steer_pos_output(tar_pos);
+//        tar_pos = pos_range * (double) channel_steer->servo_out / 4500;
+
+        if (method) {     // method == 1 ; 汤老师 方法
+            tar_pos = ((double) nav_controller->bearing_error_cd())
+                    / 5729.57795f;
+
+            if (tar_pos > 0.8 * pos_range) {
+                tar_pos = 0.8 * pos_range;
+            } else if (tar_pos < -0.8 * pos_range) {
+                tar_pos = -0.8 * pos_range;
+            }
+
+            channel_steer->servo_out = (int16_t) (4500 * tar_pos / (pos_range));
+
+            steer_pos_output(-tar_pos);
+        } else {      // method == 0 原方法
+            if (channel_steer->servo_out > 100 && steer_pos < 25 * PI / 180) { // turn right,less than +25 degree
+                channel_steer->radio_out = 2000;
+                channel_steer_dir->radio_out = turn_right;
+            } else if (channel_steer->servo_out < -100
+                    && steer_pos > -25 * PI / 180) { // turn left, more than -25 degree
+                channel_steer->radio_out = 2000;
+                channel_steer_dir->radio_out = turn_left;
+            } else {
+                channel_steer->radio_out = 0;
+            }
+        }
 
 //        channel_steer->calc_pwm();
         // calc channel steer radio out
@@ -430,13 +459,20 @@ void Rover::set_servos(void) {
 
         // limit throttle movement speed
         throttle_slew_limit(last_throttle);
-
+        if (channel_throttle->radio_out > channel_throttle->radio_max) {
+            channel_throttle->radio_out = channel_throttle->radio_max;
+        } else if (channel_throttle->radio_out < channel_throttle->radio_min) {
+            channel_throttle->radio_out = channel_throttle->radio_min;
+        }
         channel_throttle->radio_out =
                 (int16_t) (((float) (channel_throttle->radio_out
                         - channel_throttle->radio_min))
                         / (channel_throttle->radio_max
-                                - channel_throttle->radio_min) * 2500);
+                                - channel_throttle->radio_min) * 700);
         channel_throttle_dir->radio_out = 2500;
+    } else {
+        channel_throttle->radio_out = 0;
+        mid_adjust();
     }
 
     // record last throttle before we apply skid steering
@@ -455,40 +491,6 @@ void Rover::set_servos(void) {
         channel_throttle->calc_pwm();
     }
 
-//    if (time_count % 12 == 0)
-//        send_Ctrl_CMD_to_EtherCAT(hal.uartE, channel_throttle->servo_out,
-//                channel_steer->servo_out);
-    //湖试不需要视频控制
-//    if (time_count % 12 == 4) {
-//        //   发送视频侦查仪旋转速度控制命令
-//        camera_H_sent = constrain_int16(4 * channel_camera_H->read() - 6040,
-//                -2000, 2000);
-//        camera_V_sent = constrain_int16(4 * channel_camera_V->read() - 6040,
-//                -2000, 2000);
-//
-//        camera_V_sent= - camera_V_sent;
-//
-//        camera_sent[0] = camera_H_sent >> 8;
-//        camera_sent[1] = 0xff & camera_H_sent;
-//        camera_sent[2] = camera_V_sent >> 8;
-//        camera_sent[3] = 0xff & camera_V_sent;
-//        camera_sent[4] = 0;
-//        camera_sent[5] = 0;
-//z
-//
-//
-//        EtherCAT_camera_send(0x07, camera_sent);
-//    }
-
-//    if (time_count % 12 == 8) {
-
-//        gcs_data_exchange();
-
-    //湖试不需要视频控制
-//        EtherCAT_data_exchange();
-
-//    }
-
 #if HIL_MODE == HIL_MODE_DISABLED || HIL_SERVOS
     // send values to the PWM timers for output
     // ----------------------------------------
@@ -503,7 +505,7 @@ void Rover::set_servos(void) {
      * 计算舵机位置
      *******************/
 
-    // 计算上一个控制周期中脉冲数
+    // 计算下一个控制周期中脉冲数
     pulse = delta_time * output_freq / 1000;
     // 转向方向
     if (channel_steer->radio_out
@@ -518,6 +520,10 @@ void Rover::set_servos(void) {
 
     steer_pos += dir * pulse * pulse2angle;
 
+//    uint8_t message = 0;
+//    message = 0xff & ((int8_t) (steer_pos * 100));
+//    hal.uartE->write(message);
+
 //    if (hal.scheduler->millis() % 500 <= 10) {
 //        hal.uartE->printf("\r\n p:%f tp:%f \r\n", (float)steer_pos, (float)tar_pos);
 //    }
@@ -525,26 +531,30 @@ void Rover::set_servos(void) {
 }
 
 /****************************
- * 调整舵角中位位置，暂时未使用
+ * 调整舵角中位位置
  */
 void Rover::mid_adjust(void) {
 
-    hal.rcout->set_freq(0xff, output_freq);
-    if ((channel_steer->radio_in - channel_steer->radio_mid) >= 100) {
+    hal.rcout->set_freq(0xff, output_freq / 4);
+    if (channel_steer->radio_in >= channel_steer->radio_mid + 100) {
         channel_steer->radio_out = 2000;
-        channel_steer_dir->radio_out = turn_left
+        channel_steer_dir->radio_out = turn_right
         ;
         // 附加通道 radio_out = 2500;
     } else {
-        if ((channel_steer->radio_mid - channel_steer->radio_in) >= 100) {
+        if (channel_steer->radio_in <= channel_steer->radio_mid - 100) {
             channel_steer->radio_out = 2000;
-            channel_steer_dir->radio_out = turn_right
+            channel_steer_dir->radio_out = turn_left
             ;
             //附加通道 radio_out = 0;
         } else {
             channel_steer->radio_out = 0;
         }
     }
+
+    steer_pos = 0;
+    // 对中完成，标志位置1
+    mid_adjust_flag = 1;
 
 }
 
@@ -553,35 +563,29 @@ void Rover::mid_adjust(void) {
  */
 
 void Rover::steer_pos_output(double steer_pos_tar) {
+
+    if (steer_pos_tar > pos_range) {
+        steer_pos_tar = pos_range;
+    } else if (steer_pos_tar < -pos_range) {
+        steer_pos_tar = -pos_range;
+    }
+
     double delta_pos = 0;
-    uint8_t message[8] = { 0 };
+
     uint32_t time = hal.scheduler->millis();
     delta_pos = steer_pos_tar - steer_pos;
 //    hal.uartE->printf("/r/n dp:%f",(float)delta_pos);
-    if (delta_pos > 0.06) {
+    if (delta_pos > 0.025) {
         channel_steer->radio_out = 2000;
         channel_steer_dir->radio_out = turn_right;
-    } else if (delta_pos < -0.06) {
+    } else if (delta_pos < -0.025) {
         channel_steer->radio_out = 2000;
         channel_steer_dir->radio_out = turn_left;
     } else {
         channel_steer->radio_out = 0;
     }
 
-    // 半物理仿真，将控制输出在一个数组中发出
-    // 帧头
-    message[0] = 0xff;
-    message[1] = 0xff;
-    // 系统时间
-    message[2] |= time >> 24;
-    message[3] |= time >> 16;
-    message[4] |= time >> 8;
-    message[5] |= time;
-    // 舵角
-    message[6] = (uint8_t) ((int8_t) (steer_pos * 100));
-    message[7] = 1;
-
-    hal.uartE->write(message[6]);
+//    }
 
 }
 

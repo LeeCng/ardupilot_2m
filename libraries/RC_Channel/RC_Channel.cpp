@@ -208,11 +208,11 @@ RC_Channel::calc_pwm(void)
     }else if(_type == RC_CHANNEL_TYPE_ANGLE_RAW) {
         pwm_out         = (float)servo_out * 0.1f;
         int16_t reverse_mul = (_reverse==-1?-1:1);
-        radio_out       = (pwm_out * reverse_mul) + radio_trim;
+        radio_out       = (pwm_out * reverse_mul) + radio_mid;
 
     }else{     // RC_CHANNEL_TYPE_ANGLE
         pwm_out         = angle_to_pwm();
-        radio_out       = pwm_out + radio_trim;
+        radio_out       = pwm_out + radio_mid;
     }
 
     radio_out = constrain_int16(radio_out, radio_min.get(), radio_max.get());

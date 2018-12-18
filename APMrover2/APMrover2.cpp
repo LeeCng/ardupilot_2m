@@ -390,7 +390,7 @@ void Rover::update_current_mode(void)
     switch (control_mode){
     case AUTO:
     case RTL:
-        mid_adjust_flag = 0;
+//        mid_adjust_flag = 0;
         set_reverse(false);
         calc_lateral_acceleration();
         calc_nav_steer();
@@ -448,7 +448,6 @@ void Rover::update_current_mode(void)
           we set the exact value in set_servos(), but it helps for
           logging
          */
-        mid_adjust_flag = 0;
         channel_throttle->servo_out = channel_throttle->control_in;
         channel_steer->servo_out = channel_steer->pwm_to_angle();
 
@@ -459,15 +458,13 @@ void Rover::update_current_mode(void)
 
     case HOLD:
         // hold position - stop motors and center steering
-        channel_throttle->radio_out = (channel_throttle->radio_max
-                + channel_throttle->radio_min) / 2;
+//        channel_throttle->radio_out = (channel_throttle->radio_max
+//                + channel_throttle->radio_min) / 2;
 //        channel_steer->radio_out = 0;
         set_reverse(false);
         // 舵角对中
-            mid_adjust();
-            steer_pos = 0;
-            // 对中完成，标志位置1
-            mid_adjust_flag = 1;
+//            mid_adjust();
+
 //            hal.uartE->printf("\r\n mid adjust finished. \r\n");
 
 
@@ -497,7 +494,8 @@ void Rover::update_navigation()
         calc_lateral_acceleration();
         calc_nav_steer();
         if (verify_RTL()) {
-            channel_throttle->servo_out = g.throttle_min.get();
+//            channel_throttle->servo_out = g.throttle_min.get();
+            channel_throttle->servo_out = 0;
             set_mode(HOLD);
         }
         break;

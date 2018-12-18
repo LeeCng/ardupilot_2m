@@ -4,7 +4,8 @@
 #include "AP_L1_Control.h"
 
 extern const AP_HAL::HAL& hal;
-
+#define L_boat 2    // uint: m
+#define Ld_boat 6   // unit: m
 // table of user settable parameters
 const AP_Param::GroupInfo AP_L1_Control::var_info[] PROGMEM = {
     // @Param: PERIOD
@@ -128,13 +129,14 @@ if (fabsf(Nu) > Nu_limit && fabsf(_last_Nu) > Nu_limit
 // update L1 control for waypoint navigation
 // this function costs about 3.5 milliseconds on a AVR2560
 // 在无人船导航中，不读取ahrs数据，直接从组合导航结果 GPS_State 中读取数据
-void AP_L1_Control::update_waypoint(const struct Location &prev_WP,
+bool AP_L1_Control::update_waypoint(const struct Location &prev_WP,
     const struct Location &next_WP) {
-
+bool method = 1;
 struct Location _current_loc;
 float Nu;
 float xtrackVel;
 float ltrackVel;
+float Nu_phy = 0;
 
 hal.uartE->begin(9600);
 
@@ -167,13 +169,14 @@ if (groundSpeed < 0.2f) {
 _L1_dist = 0.3183099f * _L1_damping * _L1_period * groundSpeed;
 
 // Calculate the NE position of WP B relative to WP A
-Vector2f AB = location_diff(prev_WP, next_WP);
+//Vector2f AB = location_diff(prev_WP, next_WP);    // unit: m
+Vector2f AB = location_diff(next_WP, prev_WP);
 
 // Check for AB zero length and track directly to the destination
 // if too small
-if (AB.length() < 1.0e-6f) {
+if (AB.length() < 1.0e-7f) {
     AB = location_diff(_current_loc, next_WP);
-    if (AB.length() < 1.0e-6f) {
+    if (AB.length() < 1.0e-7f) {
         AB = Vector2f(cosf(_gps.yaw()), sinf(_gps.yaw()));
 //        AB = Vector2f(cosf(_ahrs.yaw), sinf(_ahrs.yaw));
     }
@@ -191,68 +194,124 @@ _crosstrack_error = A_air % AB;
 //Otherwise do normal L1 guidance
 float WP_A_dist = A_air.length();
 float alongTrackDist = A_air * AB;
-if (WP_A_dist > _L1_dist && alongTrackDist / max(WP_A_dist, 1.0f) < -0.7071f) {
-    //Calc Nu to fly To WP A
-    Vector2f A_air_unit = (A_air).normalized(); // Unit vector from WP A to aircraft
-    xtrackVel = _groundspeed_vector % (-A_air_unit); // Velocity across line
-    ltrackVel = _groundspeed_vector * (-A_air_unit); // Velocity along line
-    Nu = atan2f(xtrackVel, ltrackVel);
-    _nav_bearing = atan2f(-A_air_unit.y, -A_air_unit.x); // bearing (radians) from AC to L1 point
+if (_L1_period < 60) {
+    if (WP_A_dist > _L1_dist
+            && alongTrackDist / max(WP_A_dist, 1.0f) < -0.7071f) {
+        //Calc Nu to fly To WP A
+        Vector2f A_air_unit = (A_air).normalized(); // Unit vector from WP A to aircraft
+        xtrackVel = _groundspeed_vector % (-A_air_unit); // Velocity across line
+        ltrackVel = _groundspeed_vector * (-A_air_unit); // Velocity along line
+        Nu = atan2f(xtrackVel, ltrackVel);
+        _nav_bearing = atan2f(-A_air_unit.y, -A_air_unit.x); // bearing (radians) from AC to L1 point
 
 //    if ((hal.scheduler->millis() % 500) <= 10) {
 //        hal.uartE->printf("Nu2A: %f ", Nu);
 //    }
 
-} else { //Calc Nu to fly along AB line
+    } else { //Calc Nu to fly along AB line
 
-    //Calculate Nu2 angle (angle of velocity vector relative to line connecting waypoints)
-    xtrackVel = _groundspeed_vector % AB; // Velocity cross track
-    ltrackVel = _groundspeed_vector * AB; // Velocity along track
-    float Nu2 = atan2f(xtrackVel, ltrackVel);
-    //Calculate Nu1 angle (Angle to L1 reference point)
-    float sine_Nu1 = _crosstrack_error / max(_L1_dist, 0.1f);
-    //Limit sine of Nu1 to provide a controlled track capture angle of 45 deg
-    sine_Nu1 = constrain_float(sine_Nu1, -0.7071f, 0.7071f);
-    float Nu1 = asinf(sine_Nu1);
+        //Calculate Nu2 angle (angle of velocity vector relative to line connecting waypoints)
+        xtrackVel = _groundspeed_vector % AB; // Velocity cross track
+        ltrackVel = _groundspeed_vector * AB; // Velocity along track
+        float Nu2 = atan2f(xtrackVel, ltrackVel);
+        //Calculate Nu1 angle (Angle to L1 reference point)
+        float sine_Nu1 = _crosstrack_error / max(_L1_dist, 0.1f);
+        //Limit sine of Nu1 to provide a controlled track capture angle of 45 deg
+        sine_Nu1 = constrain_float(sine_Nu1, -0.7071f, 0.7071f);
+        float Nu1 = asinf(sine_Nu1);
 
-    // compute integral error component to converge to a crosstrack of zero when traveling
-    // straight but reset it when disabled or if it changes. That allows for much easier
-    // tuning by having it re-converge each time it changes.
-    if (_L1_xtrack_i_gain <= 0
-            || !is_equal(_L1_xtrack_i_gain, _L1_xtrack_i_gain_prev)) {
-        _L1_xtrack_i = 0;
-        _L1_xtrack_i_gain_prev = _L1_xtrack_i_gain;
-    } else if (fabsf(Nu1) < radians(5)) {
+        // compute integral error component to converge to a crosstrack of zero when traveling
+        // straight but reset it when disabled or if it changes. That allows for much easier
+        // tuning by having it re-converge each time it changes.
+        if (_L1_xtrack_i_gain <= 0
+                || !is_equal(_L1_xtrack_i_gain, _L1_xtrack_i_gain_prev)) {
+            _L1_xtrack_i = 0;
+            _L1_xtrack_i_gain_prev = _L1_xtrack_i_gain;
+        } else if (fabsf(Nu1) < radians(5)) {
 
-        const float dt = 0.1f; // 10Hz
-        _L1_xtrack_i += Nu1 * _L1_xtrack_i_gain * dt;
+            const float dt = 0.1f; // 10Hz
+            _L1_xtrack_i += Nu1 * _L1_xtrack_i_gain * dt;
 
-        // an AHRS_TRIM_X=0.1 will drift to about 0.08 so 0.1 is a good worst-case to clip at
-        _L1_xtrack_i = constrain_float(_L1_xtrack_i, -0.1f, 0.1f);
-    }
+            // an AHRS_TRIM_X=0.1 will drift to about 0.08 so 0.1 is a good worst-case to clip at
+            _L1_xtrack_i = constrain_float(_L1_xtrack_i, -0.1f, 0.1f);
+        }
 
-    // to converge to zero we must push Nu1 harder
-    Nu1 += _L1_xtrack_i;
+        // to converge to zero we must push Nu1 harder
+        Nu1 += _L1_xtrack_i;
 
-    Nu = Nu1 + Nu2;
+        Nu = Nu1 + Nu2;
 
-    _nav_bearing = atan2f(AB.y, AB.x) + Nu1; // bearing (radians) from AC to L1 point
+        method = 0;
+
+        _nav_bearing = atan2f(AB.y, AB.x) + Nu1; // bearing (radians) from AC to L1 point
 
 //    if ((hal.scheduler->millis() % 500) <= 10) {
 //        hal.uartE->printf("Nu1: %f Nu2: %f L1xtracki: %f ", Nu1,
 //                Nu2, _L1_xtrack_i);
 //    }
 
+    }
+} else {
+
+    /*************************************************
+     * LD Control
+     */
+    xtrackVel = _groundspeed_vector % AB; // Velocity cross track
+    ltrackVel = _groundspeed_vector * AB; // Velocity along track
+
+//    float sin_Nu1 = -xtrackVel / groundSpeed;
+//    float cos_Nu1 = ltrackVel / groundSpeed;
+    // Nu1 速度与航迹连线AB夹角
+    float Nu1 = -atan2f(xtrackVel, ltrackVel);
+    Nu_phy = Nu1;
+//    constrain_float(_crosstrack_error, -Ld_boat, Ld_boat);
+    _crosstrack_error = -_crosstrack_error;
+    if (_crosstrack_error >= Ld_boat) {
+        _crosstrack_error = Ld_boat;
+    } else if (_crosstrack_error <= -Ld_boat) {
+        _crosstrack_error = -Ld_boat;
+    }
+
+    float tan_tar_pos = 2 * L_boat
+            * (_crosstrack_error * cosf(Nu1)
+                    - ((float) sqrt(
+                            Ld_boat * Ld_boat
+                                    - _crosstrack_error * _crosstrack_error))
+                            * sinf(Nu1)) / (Ld_boat * Ld_boat);
+
+    Nu = atan2f(tan_tar_pos, 1);
+    //  舵偏角 顺时针为正
+//    Nu = atanf(tan_tar_pos);
+
+    _nav_bearing = Nu;
+
+    method = 1;
+
+//    if ((hal.scheduler->millis() % 500) <= 10) {
+//        hal.uartE->printf("\r\n vx%.2f,vy%.2f,abx%.2f,aby%.2f", _groundspeed_vector.x ,
+//                _groundspeed_vector.y, AB.x,AB.y);
+//    }
+//    if ((hal.scheduler->millis() % 400) <= 10) {
+//        hal.uartE->printf("\r\n airx%.1f,airy%.1f,tar%.1f", A_air.x ,
+//                A_air.y, tan_tar_pos);
+//    }
+//
+//    if ((hal.scheduler->millis() % 500) >= 480) {
+//        hal.uartE->printf("\r\n x%.2f,l%.2f,ce%.2f,tan1%.2f", xtrackVel * 10,
+//                ltrackVel * 10, _crosstrack_error * 10,tan_tar_pos*10);
+//    }
+
 }
 
-_prevent_indecision(Nu);
+//_prevent_indecision(Nu);
 _last_Nu = Nu;
 
-//Limit Nu to +-pi
-Nu = constrain_float(Nu, -1.5708f, +1.5708f);
-_latAccDem = K_L1 * groundSpeed * groundSpeed / _L1_dist * sinf(Nu);
+//Limit Nu to +-pi/2
+Nu = constrain_float(Nu, -1.5708f, 1.5708f);
+//_latAccDem = K_L1 * groundSpeed * groundSpeed / _L1_dist * sinf(Nu);
+_latAccDem = Nu_phy;
 
-//if ((hal.scheduler->millis() % 500) <= 10) {
+//if ((hal.scheduler->millis() % 500) <= 150) {
 //    hal.uartE->printf(
 //            "latAccDem: %f crstra_err : %f _L1_dist： %f vgx: %f vgy: %f ",
 //            _latAccDem, _crosstrack_error, _L1_dist, _groundspeed_vector.x,
@@ -266,6 +325,9 @@ _latAccDem = K_L1 * groundSpeed * groundSpeed / _L1_dist * sinf(Nu);
 _WPcircle = false;
 
 _bearing_error = Nu; // bearing error angle (radians), +ve to left of track
+
+return method;
+
 }
 
 // update L1 control for loitering

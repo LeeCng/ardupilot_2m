@@ -63,6 +63,11 @@ bool AP_GPS_MTK::read(void) {
 //    bool IsAMsg = false;
 //
     uint16_t numc = port->available();
+//    hal.uartE->begin(9600);
+//    uint16_t numc = hal.uartE->available();
+    if ((hal.scheduler->millis() % 500) >= 480) {
+        hal.uartE->printf("n%d", numc);
+    }
 
     if (numc >= 168) {
 
@@ -128,7 +133,7 @@ bool AP_GPS_MTK::decodeMsg() {
 //        hal.uartE->printf("sta_lat:%d\n", state.location.lat);
 //    }
 
-    state.ground_speed = sqrt(
+    state.ground_speed = (float) sqrt(
             _buffer.msg.vel_e * _buffer.msg.vel_e
                     + _buffer.msg.vel_n * _buffer.msg.vel_n);
     state.velocity.x = _buffer.msg.vel_n;
@@ -138,9 +143,9 @@ bool AP_GPS_MTK::decodeMsg() {
     state.num_sats = _buffer.msg.num_satellites;
     state.have_vertical_velocity = false;
     state.last_gps_time_ms = hal.scheduler->millis();
-    state.roll = _buffer.msg.roll;
-    state.pitch = _buffer.msg.pitch;
-    state.yaw = _buffer.msg.yaw;
+    state.roll = _buffer.msg.roll / 180 * PI;      // in radians
+    state.pitch = _buffer.msg.pitch / 180 * PI;
+    state.yaw = _buffer.msg.yaw / 180 * PI;
     state.roll_rate = _buffer.msg.roll_rate;
     state.pitch_rate = _buffer.msg.pitch_rate;
     state.yaw_rate = _buffer.msg.yaw_rate;
@@ -151,6 +156,16 @@ bool AP_GPS_MTK::decodeMsg() {
     state.RelPy = _buffer.msg.RelPy;
     state.RelPz = _buffer.msg.RelPz;
 
+//    if (hal.scheduler->millis() % 1000 <= 20) {
+//        hal.uartE->printf("\r\n vn=%.2f , ve=%.2f , gs%.2f \r\n", _buffer.msg.vel_n,
+//                state.velocity.y, state.ground_speed);
+////        hal.uartE->write(_buffer.bytes,84);
+//        hal.uartE->printf("\r\n nd:%d %d %d %d \r\n", _buffer.bytes[36],
+//                _buffer.bytes[37], _buffer.bytes[38], _buffer.bytes[39]);
+//        hal.uartE->printf("\r\n ed:%d %d %d %d \r\n", _buffer.bytes[44],
+//                _buffer.bytes[45], _buffer.bytes[46], _buffer.bytes[47]);
+//
+//    }
     return true;
 
 }
@@ -214,6 +229,7 @@ void AP_GPS_MTK::GPS_data_2_temp_buffer(uint16_t numc) {
     for (uint16_t i = 0; i <= numc; i++) {
 
         temp_buffer[tail % 1024] = port->read();
+//        temp_buffer[tail % 1024] = hal.uartE->read();
         tail++;
     }
     if (tail - head >= 1024) {
